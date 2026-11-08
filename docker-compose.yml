@@ -1,0 +1,41 @@
+# Infra for local development. Run the services with Maven (see README) or build the jars first
+# (mvn -DskipTests package) and start the "app" profile: docker compose --profile app up --build
+services:
+  redis:
+    image: redis:7.4
+    command: ["redis-server", "--appendonly", "yes"]
+    ports: ["6379:6379"]
+
+  realtime:
+    profiles: ["app"]
+    build: ./realtime-collaboration-service
+    environment: { REDIS_HOST: redis, HOSTNAME: realtime-1 }
+    depends_on: [redis]
+    ports: ["8081:8081"]
+
+  snapshot:
+    profiles: ["app"]
+    build: ./snapshot-persistence-service
+    environment: { REDIS_HOST: redis }
+    depends_on: [redis]
+
+  document:
+    profiles: ["app"]
+    build: ./document-service
+    environment: { NOTIFICATION_BASE_URL: "http://notification:8083" }
+    ports: ["8082:8082"]
+
+  notification:
+    profiles: ["app"]
+    build: ./notification-service
+    ports: ["8083:8083"]
+
+  gateway:
+    profiles: ["app"]
+    build: ./api-gateway
+    environment:
+      REALTIME_WS_URI: ws://realtime:8081
+      REALTIME_HTTP_URI: http://realtime:8081
+      DOCUMENT_URI: http://document:8082
+      NOTIFICATION_URI: http://notification:8083
+    ports: ["8080:8080"]

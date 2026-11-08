@@ -1,0 +1,15 @@
+server:
+  port: 8084
+spring:
+  application:
+    name: snapshot-persistence-service
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+snapshot:
+  interval-ms: 10000
+  ops-threshold: 500          # snapshot after this many ops...
+  max-age-seconds: 60         # ...or after this long with pending ops
+  retain-ops: 5000            # ops kept in the Redis stream after a snapshot
+  archive-dir: ./data/archive # local stand-in for S3 / Cassandra

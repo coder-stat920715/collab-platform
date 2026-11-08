@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Collab demo</title>
+<style>
+  :root { --bg:#fff; --fg:#1a1a1a; --muted:#666; --line:#d0d0d0; --accent:#2b6cb0; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#141414; --fg:#eee; --muted:#999; --line:#333; --accent:#63b3ed; } }
+  body { margin:0; font:16px/1.5 system-ui, sans-serif; background:var(--bg); color:var(--fg); }
+  main { max-width:860px; margin:0 auto; padding:16px; }
+  textarea { width:100%; min-height:55vh; box-sizing:border-box; padding:12px; font:15px/1.6 ui-monospace, monospace;
+             background:var(--bg); color:var(--fg); border:1px solid var(--line); border-radius:8px; }
+  #bar { display:flex; gap:12px; flex-wrap:wrap; align-items:center; color:var(--muted); font-size:14px; margin-bottom:8px; }
+  #status { color:var(--accent); font-weight:600; }
+  #users span { display:inline-block; margin-right:10px; }
+</style>
+</head>
+<body>
+<main>
+  <h2>Real-time collaboration demo</h2>
+  <div id="bar">
+    <span>doc: <b id="doc"></b></span><span>you: <b id="me"></b></span>
+    <span>rev: <b id="rev">0</b></span><span id="status">connecting</span>
+  </div>
+  <textarea id="ta" disabled placeholder="Open this page in two tabs with ?doc=demo and type."></textarea>
+  <p id="users"></p>
+  <p style="color:var(--muted);font-size:13px">Use <code>?doc=NAME&amp;user=NAME</code> in the URL. Dev auth only.</p>
+</main>
+<script src="ot.js"></script>
+<script>
+const q = new URLSearchParams(location.search);
+const docId = q.get('doc') || 'demo';
+const userId = q.get('user') || 'user-' + Math.random().toString(36).slice(2, 6);
+const clientId = userId + '-' + Math.random().toString(36).slice(2, 8);
+const ta = document.getElementById('ta');
+const $ = (id) => document.getElementById(id);
+$('doc').textContent = docId; $('me').textContent = userId;
+
+let ws, revision = 0, text = '', outstanding = null, queue = [], clientSeq = 0, ready = false;
+const users = new Map();
+
+function status(s) { $('status').textContent = s; }
+function send(type, payload) { if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type, payload })); }
+
+function connect() {
+  ready = false; status('connecting');
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(`${proto}//${location.host}/ws/docs/${encodeURIComponent(docId)}?userId=${encodeURIComponent(userId)}&name=${encodeURIComponent(userId)}`);
+  ws.onopen = () => { status('syncing'); send('RESUME', { lastSeq: revision }); };
+  ws.onmessage = (e) => onFrame(JSON.parse(e.data));
+  ws.onclose = () => { ready = false; ta.disabled = true; status('offline, retrying'); setTimeout(connect, 500 + Math.random() * 1500); };
+}
+
+function sendNext() {
+  if (!ready || outstanding || queue.length === 0) return;
+  outstanding = queue.shift();
+  send('OP', { documentId: docId, clientId, clientSeq: outstanding.clientSeq, userId, baseRevision: revision, serverSeq: 0, components: outstanding.comps });
+}
+
+function render(newText, selStart, selEnd) {
+  text = newText; ta.value = newText;
+  ta.setSelectionRange(Math.min(selStart, newText.length), Math.min(selEnd, newText.length));
+  $('rev').textContent = revision;
+}
+
+function onFrame(f) {
+  switch (f.type) {
+    case 'OP': {
+      const op = f.payload;
+      if (op.serverSeq <= revision) return;
+      if (op.serverSeq > revision + 1) { send('RESUME', { lastSeq: revision }); return; }
+      if (op.clientId === clientId && outstanding && op.clientSeq === outstanding.clientSeq) {
+        revision = op.serverSeq; outstanding = null; $('rev').textContent = revision; sendNext(); return;
+      }
+      let s = op.components;
+      const pending = outstanding ? [outstanding, ...queue] : queue;
+      for (const p of pending) { const [s2, p2] = OT.transform(s, p.comps); s = s2; p.comps = p2; }
+      const a = OT.transformCursor(ta.selectionStart, s), b = OT.transformCursor(ta.selectionEnd, s);
+      revision = op.serverSeq;
+      render(OT.apply(text, s), a, b);
+      break;
+    }
+    case 'SNAPSHOT':
+      outstanding = null; queue = []; revision = f.payload.revision;
+      render(f.payload.content, 0, 0); break;
+    case 'READY':
+      ready = true; ta.disabled = false; status('connected');
+      outstanding ? send('OP', { documentId: docId, clientId, clientSeq: outstanding.clientSeq, userId, baseRevision: revision, serverSeq: 0, components: outstanding.comps })
+                  : sendNext();
+      break;
+    case 'PRESENCE': {
+      const p = f.payload;
+      if (p.type === 'LEAVE') users.delete(p.userId); else users.set(p.userId, p);
+      $('users').innerHTML = [...users.values()].map(u => `<span>${u.userId}${u.userId === userId ? ' (you)' : ''} @${u.cursorOffset}</span>`).join('');
+      break;
+    }
+    case 'ERROR':
+      status('error: ' + f.payload.code);
+      if (f.payload.code === 'RESYNC') send('RESUME', { lastSeq: revision });
+      break;
+  }
+}
+
+ta.addEventListener('input', () => {
+  const comps = OT.diff(text, ta.value);
+  text = ta.value;
+  queue.push({ clientSeq: ++clientSeq, comps });
+  sendNext();
+});
+['keyup', 'click', 'select'].forEach(ev => ta.addEventListener(ev, () =>
+  send('PRESENCE', { documentId: docId, cursorOffset: ta.selectionStart, selectionStart: ta.selectionStart, selectionEnd: ta.selectionEnd, color: '#2b6cb0', type: 'UPDATE' })));
+
+connect();
+</script>
+</body>
+</html>

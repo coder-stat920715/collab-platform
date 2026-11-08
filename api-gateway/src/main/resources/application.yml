@@ -1,0 +1,22 @@
+server:
+  port: 8080
+spring:
+  application:
+    name: api-gateway
+  cloud:
+    gateway:
+      routes:
+        - id: realtime-ws
+          uri: ${REALTIME_WS_URI:ws://localhost:8081}
+          predicates: [ Path=/ws/docs/** ]
+        - id: realtime-static
+          uri: ${REALTIME_HTTP_URI:http://localhost:8081}
+          predicates: [ Path=/index.html,/ot.js ]
+        - id: notifications
+          uri: ${NOTIFICATION_URI:http://localhost:8083}
+          predicates: [ Path=/api/notifications/** ]
+        - id: documents
+          uri: ${DOCUMENT_URI:http://localhost:8082}
+          predicates: [ Path=/api/v1/** ]
+# Production: validate JWTs here (spring-boot-starter-oauth2-resource-server), rate-limit with the Redis
+# RequestRateLimiter filter, and route /ws/docs/{id} to the owner node using consistent hashing on the document id.

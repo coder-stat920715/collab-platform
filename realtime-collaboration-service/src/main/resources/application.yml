@@ -1,0 +1,28 @@
+server:
+  port: 8081
+spring:
+  application:
+    name: realtime-collaboration-service
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+collab:
+  node-id: ${HOSTNAME:local-node}
+  lease-ttl: 5s
+  actor:
+    history-window: 1000
+    idle-evict: 5m
+  ws:
+    outbound-buffer: 1024
+    ping-interval: 15s
+    dead-after: 45s
+    allowed-origins: "*"
+  acl:
+    mode: ALLOW_ALL            # ALLOW_ALL (dev) | REMOTE (calls document-service)
+    base-url: http://localhost:8082
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
